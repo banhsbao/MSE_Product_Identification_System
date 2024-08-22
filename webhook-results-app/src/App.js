@@ -81,7 +81,7 @@ function App() {
             Live Video Check
           </Typography>
           <img
-            src="http://localhost:5005/video_feed"
+            src="http://192.168.1.117:5000/video_feed"
             alt="Verify Product Quality"
             style={{ width: '100%', borderRadius: '8px', marginBottom: '16px' }}
           />

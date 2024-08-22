@@ -1,11 +1,15 @@
+import ultralytics
 from flask import Flask, jsonify, Response, stream_with_context
 from flask_cors import CORS, cross_origin
+import requests
 import uuid
 import cv2
 import base64
 import threading
 import traceback
 import time
+import numpy as np
+
 
 app = Flask(__name__)
 CORS(app)
@@ -20,18 +24,43 @@ STATUS_PASS = "PASS"
 requests_store = {}
 current_request = None
 
+
+# def capture_frame():
+#     cap = cv2.VideoCapture(0)
+#     try:
+#         ret, frame = cap.read()
+#         if not ret:
+#             raise ValueError("Failed to capture image")
+#         ret, buffer = cv2.imencode('.jpg', frame)
+#         if not ret:
+#             raise ValueError("Failed to encode image")
+#         return buffer.tobytes()
+#     finally:
+#         cap.release()
+
 def capture_frame():
-    cap = cv2.VideoCapture(0)
+    url = "http://192.168.1.117:5000/video_feed"
     try:
-        ret, frame = cap.read()
-        if not ret:
-            raise ValueError("Failed to capture image")
-        ret, buffer = cv2.imencode('.jpg', frame)
-        if not ret:
-            raise ValueError("Failed to encode image")
-        return buffer.tobytes()
-    finally:
-        cap.release()
+        response = requests.get(url, stream=True)
+        if response.status_code != 200:
+            raise ValueError(f"Failed to get video stream: {response.status_code}")
+        data = b''
+        for chunk in response.iter_content(chunk_size=1024):
+            data += chunk
+            a = data.find(b'\xff\xd8')
+            b = data.find(b'\xff\xd9')
+            if a != -1 and b != -1:
+                jpg = data[a:b+2]
+                data = data[b+2:]
+                frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                ret, buffer = cv2.imencode('.jpg', frame)
+                if not ret:
+                    raise ValueError("Failed to encode image")
+                return buffer.tobytes()
+
+    except Exception as e:
+        raise ValueError(f"Error capturing image: {e}")
+
 
 def generate_request_object():
     return {
@@ -53,26 +82,30 @@ def process_texts_handler(contents):
     image = cv2.imread(image_path)
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
-    _, thresholded_image = cv2.threshold(blurred_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, thresholded_image = cv2.threshold(
+        blurred_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     pytesseract.pytesseract.tesseract_cmd = 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Tesseract-OCR'
     text = pytesseract.image_to_string(thresholded_image, lang='eng')
     pnr_regex = re.compile(r'PNR (\w+)')
     ser_regex = re.compile(r'SER (\w+)')
     dmf_regex = re.compile(r'(\d{2}/\d{4})')
-    pnr_value = pnr_regex.search(text).group(1) if pnr_regex.search(text) else None
-    ser_value = ser_regex.search(text).group(1) if ser_regex.search(text) else None
-    dmf_value = dmf_regex.search(text).group(1) if dmf_regex.search(text) else None
+    pnr_value = pnr_regex.search(text).group(
+        1) if pnr_regex.search(text) else None
+    ser_value = ser_regex.search(text).group(
+        1) if ser_regex.search(text) else None
+    dmf_value = dmf_regex.search(text).group(
+        1) if dmf_regex.search(text) else None
     ocr_result = {
-        "pnr":pnr_value,
-        "ser":ser_value,
-        "dmf":dmf_value
+        "pnr": pnr_value,
+        "ser": ser_value,
+        "dmf": dmf_value
     }
     return ocr_result
 
+
 def step1_verification_stamp(req_obj):
     image = encode_image(capture_frame())
-    # image_bytes = image.tobytes()
-    ocr_result =  process_texts_handler({})
+    ocr_result = process_texts_handler({})
     if ocr_result is not None:
         req_obj['step'] = 1
         req_obj['body']['step1'] = {
@@ -90,15 +123,12 @@ def step1_verification_stamp(req_obj):
         }
     time.sleep(5)
 
-import ultralytics
+
 MODEL_PATH = './dsp-model-latest.pt'
 model = ultralytics.YOLO(MODEL_PATH)
+
+
 def caculate_stuff(image):
-    return {
-        "screws": 1,
-        "label_present": 2,
-        "yellow_caps": 3,
-    }
     yellow_caps = 0
     screws = 0
     label_present = False
@@ -109,28 +139,29 @@ def caculate_stuff(image):
             label = int(box.cls[0])
             if label == 2:
                 yellow_caps += 1
-            elif label == 0: 
+            elif label == 0:
                 screws += 1
             if label == 1:
                 label_present = True
     return {
-    yellow_caps,
-    label_present,
-    screws
-}
+        yellow_caps,
+        label_present,
+        screws
+    }
+
 
 def step2_verification_first_side(req_obj):
-    #Required stuff
+    # Required stuff
     required_screws = 0
     required_label_present = False
-    required_yellow_caps= 0
-    #Running
+    required_yellow_caps = 0
+    # Running
     image = encode_image(capture_frame())
     result = caculate_stuff(image)
     screws = result['screws']
     label_present = result['label_present']
     yellow_caps = result['yellow_caps']
-    if required_screws != screws or required_label_present != label_present or yellow_caps!= required_yellow_caps:
+    if required_screws != screws or required_label_present != label_present or yellow_caps != required_yellow_caps:
         req_obj['step'] = 2
         req_obj['body']['step2'] = {
             "status": STATUS_PASS,
@@ -149,18 +180,19 @@ def step2_verification_first_side(req_obj):
             "yellow_caps": yellow_caps,
         }
 
+
 def step3_verification_second_side(req_obj):
-    #Required stuff
+    # Required stuff
     required_screws = 0
     required_label_present = False
-    required_yellow_caps= 0
-    #Running
+    required_yellow_caps = 0
+    # Running
     image = encode_image(capture_frame())
     result = caculate_stuff(image)
     screws = result['screws']
     label_present = result['label_present']
     yellow_caps = result['yellow_caps']
-    if required_screws != screws or required_label_present != label_present or yellow_caps!= required_yellow_caps:
+    if required_screws != screws or required_label_present != label_present or yellow_caps != required_yellow_caps:
         req_obj['step'] = 3
         req_obj['body']['step3'] = {
             "status": STATUS_PASS,
@@ -173,12 +205,13 @@ def step3_verification_second_side(req_obj):
         req_obj['status'] = STATUS_ERROR
     time.sleep(5)
 
+
 def step4_verification_third_side(req_obj):
-    #Required stuff
+    # Required stuff
     required_screws = 0
     required_label_present = False
-    required_yellow_caps= 0
-    #Running
+    required_yellow_caps = 0
+    # Running
     image = encode_image(capture_frame())
     result = caculate_stuff(image)
     screws = result['screws']
@@ -203,6 +236,7 @@ def step4_verification_third_side(req_obj):
             "yellow_caps": yellow_caps,
         }
 
+
 def step5_verification_four_side(req_obj):
     screws = 0
     label = 0
@@ -217,6 +251,7 @@ def step5_verification_four_side(req_obj):
         "caps": caps,
     }
 
+
 step_functions = {
     0: step1_verification_stamp,
     1: step2_verification_first_side,
@@ -225,20 +260,21 @@ step_functions = {
     4: step5_verification_four_side
 }
 
+
 def process_detection():
     global current_request
-    
+
     while True:
         if current_request is None or current_request['status'] != STATUS_IN_PROGRESS:
             current_request = generate_request_object()
             request_id = current_request['request_id']
             requests_store[request_id] = current_request
-        
+
         for step in range(5):
             if current_request['status'] != STATUS_IN_PROGRESS:
                 break
             step_functions[step](current_request)
-        
+
         if current_request['status'] != STATUS_IN_PROGRESS:
             print("Restart new cycle!")
             time.sleep(30)
@@ -247,10 +283,12 @@ def process_detection():
         else:
             break
 
+
 def encode_image(image_bytes):
     if isinstance(image_bytes, bytes):
         return base64.b64encode(image_bytes).decode('utf-8')
     return None
+
 
 @app.route('/status', methods=['GET'])
 @cross_origin()
@@ -259,11 +297,13 @@ def check_status():
         req_obj = current_request
         if not req_obj:
             return jsonify({"error": "No current request found"}), 404
-                
+
         return jsonify(req_obj)
     except Exception as e:
-        app.logger.error("Error in /status endpoint: %s", traceback.format_exc())
+        app.logger.error("Error in /status endpoint: %s",
+                         traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/start_detection', methods=['GET'])
 @cross_origin()
@@ -274,6 +314,7 @@ def start_detection():
     else:
         return jsonify({"message": "Detection already in progress"}), 409
 
+
 @app.route('/stop_detection', methods=['GET'])
 @cross_origin()
 def stop_detection():
@@ -283,25 +324,6 @@ def stop_detection():
         return jsonify({"message": "Detection stopped"}), 200
     else:
         return jsonify({"message": "No detection in progress"}), 409
-
-def generate_frames():
-    cap = cv2.VideoCapture(0)
-    while True:
-        success, frame = cap.read()
-        if not success:
-            break
-        ret, buffer = cv2.imencode('.jpg', frame)
-        if ret:
-            frame_bytes = buffer.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-
-    cap.release()
-
-@app.route('/video_feed')
-@cross_origin()
-def video_feed():
-    return Response(stream_with_context(generate_frames()), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5005, threaded=True)

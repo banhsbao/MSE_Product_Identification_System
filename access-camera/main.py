@@ -1,5 +1,5 @@
 import cv2
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, stream_with_context
 import RPi.GPIO as GPIO
 import time
 
@@ -40,19 +40,22 @@ app = Flask(__name__)
 camera = cv2.VideoCapture(0)
 
 def generate_frames():
+    cap = cv2.VideoCapture(0)
     while True:
-        success, frame = camera.read()
+        success, frame = cap.read()
         if not success:
             break
-        else:
-            ret, buffer = cv2.imencode('.jpg', frame)
-            frame = buffer.tobytes()
+        ret, buffer = cv2.imencode('.jpg', frame)
+        if ret:
+            frame_bytes = buffer.tobytes()
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+    cap.release()
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(stream_with_context(generate_frames()), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/step', methods=['POST'])
 def step():
