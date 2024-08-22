@@ -2,7 +2,7 @@ import cv2
 from flask import Flask, request, jsonify, Response, stream_with_context
 import RPi.GPIO as GPIO
 import time
-
+camera = cv2.VideoCapture(0)
 IN1 = 17
 IN2 = 18
 IN3 = 27
@@ -38,7 +38,6 @@ def step_motor(steps, delay):
 app = Flask(__name__)
 
 def generate_frames():
-    camera = cv2.VideoCapture(0)
     while True:
         success, frame = camera.read()
         if not success:
