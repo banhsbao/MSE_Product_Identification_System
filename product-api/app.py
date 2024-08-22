@@ -54,7 +54,7 @@ def process_texts_handler(contents):
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
     _, thresholded_image = cv2.threshold(blurred_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    pytesseract.pytesseract.tesseract_cmd = '/opt/homebrew/Cellar/tesseract/5.4.1/bin/tesseract'
+    pytesseract.pytesseract.tesseract_cmd = 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Tesseract-OCR'
     text = pytesseract.image_to_string(thresholded_image, lang='eng')
     pnr_regex = re.compile(r'PNR (\w+)')
     ser_regex = re.compile(r'SER (\w+)')
