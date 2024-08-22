@@ -37,12 +37,10 @@ def step_motor(steps, delay):
 
 app = Flask(__name__)
 
-camera = cv2.VideoCapture(0)
-
 def generate_frames():
-    cap = cv2.VideoCapture(0)
+    camera = cv2.VideoCapture(0)
     while True:
-        success, frame = cap.read()
+        success, frame = camera.read()
         if not success:
             break
         ret, buffer = cv2.imencode('.jpg', frame)
@@ -51,7 +49,7 @@ def generate_frames():
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-    cap.release()
+    camera.release()
 
 @app.route('/video_feed')
 def video_feed():
